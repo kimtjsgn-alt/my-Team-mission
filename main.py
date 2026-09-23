@@ -9,12 +9,9 @@ st.set_page_config(
     page_title="학교 급식 찾아보기", page_icon="🍱", layout="centered"
 )
 
-# 사이드바 이동 안내
+# 사이드바 이동 메뉴 (경로 오류 방지를 위해 안전한 방식으로 링크)
 st.sidebar.markdown("### 📌 페이지 이동")
-st.sidebar.page_link("main.py", label="🏠 홈 (학교 검색)", icon="🔍")
-st.sidebar.page_link(
-    "pages/1_단백질.py", label="📅 송탄고 달력별 급식", icon="🍖"
-)
+st.sidebar.page_link("pages/1_단백질.py", label="📅 송탄고 달력별 급식", icon="🍖")
 
 st.title("🍱 학교 급식 찾아보기")
 
