@@ -1,184 +1,159 @@
-import streamlit as st
-import requests
 import re
-import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
+import pytz
+import requests
+import streamlit as st
 
-# Page Configuration
-st.set_page_config(page_title="고단백 급식 메뉴 탐색기", layout="wide")
+# 페이지 기본 설정
+st.set_page_config(
+    page_title="학교 급식 찾아보기", page_icon="🍱", layout="centered"
+)
 
-# NEIS API KEY 설정
-NEIS_API_KEY = "6b62a20c6ac34b50b5e112d8e0b0e8e9"
+st.title("🍱 학교 급식 찾아보기")
 
-st.title("🍗 학교별 고단백 메인 요리 & 단백질 함량 탐색기")
-st.caption("나이스 공공 급식 API 데이터를 활용하여 단백질 함량이 높은 순서대로 식단을 분석합니다.")
 
-# 1. 고단백 식재료 키워드 및 100g 당 평균 단백질 함량(g) 데이터베이스 확장
-PROTEIN_DATABASE = {
-    "소고기": ("소고기류", 22.0),
-    "우육": ("소고기류", 22.0),
-    "장어": ("장어 구이", 21.0),
-    "치킨": ("치킨/닭튀김", 20.0),
-    "닭": ("닭고기류", 20.0),
-    "생선": ("생선구이/조림", 20.0),
-    "고등어": ("고등어 요리", 20.0),
-    "연어": ("연어 요리", 20.0),
-    "보쌈": ("수육/보쌈", 19.0),
-    "삼치": ("삼치 요리", 19.0),
-    "돼지": ("돼지고기류", 18.0),
-    "돈육": ("돼지고기류", 18.0),
-    "돈": ("돼지고기류", 18.0),
-    "오리": ("오리고기", 18.0),
-    "오징어": ("오징어 요리", 18.0),
-    "참치": ("참치 요리", 18.0),
-    "순대": ("순대/순댓국", 17.0),
-    "불고기": ("불고기류", 17.0),
-    "갈비": ("갈비구이/찜", 17.0),
-    "제육": ("제육볶음", 16.0),
-    "새우": ("새우 요리", 16.0),
-    "게살": ("게살 요리", 15.0),
-    "돈까스": ("돈가스", 15.0),
-    "삼겹": ("삼겹살", 14.0),
-    "함박": ("함박스테이크", 14.0),
-    "콩": ("콩 요리", 13.0),
-    "계란": ("계란 요리", 12.0),
-    "달걀": ("계란 요리", 12.0),
-    "메추리알": ("메추리알 조림", 11.0),
-    "멸치": ("멸치 조림", 10.0),
-    "두부": ("두부 요리", 8.0)
-}
+# 1. 줄임말 보정 함수
+def normalize_school_name(name: str) -> list[str]:
+    """입력된 학교 이름과 줄임말 보정 후 이름을 순서대로 반환합니다."""
+    candidates = [name]
 
-# 2. 헬퍼 함수: 메뉴명 정제 및 단백질 함량 추정
-def parse_and_find_main_dish(ddish_nm):
-    if not ddish_nm:
-        return [], [], 0.0
-    
-    # <br/> 태그 분할 및 알레르기 번호 제거
-    raw_dishes = ddish_nm.split("<br/>")
-    cleaned_dishes = []
-    protein_details = []
-    total_est_protein = 0.0
-    
-    for dish in raw_dishes:
-        clean_name = re.sub(r'\([^)]*\)', '', dish).strip()
-        if clean_name:
-            cleaned_dishes.append(clean_name)
-            
-            # 고단백 키워드 검사 (한 메뉴당 가장 높은 단백질 키워드 1개 맵핑)
-            for keyword, (category, protein_per_100g) in PROTEIN_DATABASE.items():
-                if keyword in clean_name:
-                    protein_details.append(f"{clean_name} (약 {protein_per_100g}g/100g 기준)")
-                    total_est_protein += protein_per_100g
-                    break 
-                
-    return cleaned_dishes, protein_details, round(total_est_protein, 1)
+    replacements = [
+        ("여고", "여자고등학교"),
+        ("남고", "남자고등학교"),
+        ("여중", "여자중학교"),
+        ("남중", "남자중학교"),
+        ("여초", "여자초등학교"),
+        ("고", "고등학교"),
+        ("중", "중학교"),
+        ("초", "초등학교"),
+    ]
 
-# 3. 사용자 입력 화면
-col1, col2, col3 = st.columns([3, 2, 2])
-with col1:
-    school_name = st.text_input("학교 이름", "서울고등학교")
-with col2:
-    start_date = st.date_input("조회 시작일", datetime.now() - timedelta(days=30))
-with col3:
-    end_date = st.date_input("조회 종료일", datetime.now())
+    converted = name
+    for short, full in replacements:
+        if short in converted:
+            converted = converted.replace(short, full)
+            break
 
-search_button = st.button("검색 및 분석 실행", type="primary")
+    if converted != name:
+        candidates.append(converted)
 
-if search_button and school_name:
-    from_ymd = start_date.strftime("%Y%m%d")
-    to_ymd = end_date.strftime("%Y%m%d")
+    return candidates
 
-    # Step 1: 학교 기본 정보 조회
-    school_api_url = "https://open.neis.go.kr/hub/schoolInfo"
-    school_params = {
-        "KEY": NEIS_API_KEY,
+
+# 2. 학교 정보 검색 함수
+def search_school(school_name: str):
+    """나이스 API를 통해 학교 정보를 검색합니다."""
+    url = "https://open.neis.go.kr/hub/schoolInfo"
+    search_names = normalize_school_name(school_name)
+
+    for search_term in search_names:
+        params = {"Type": "json", "SCHUL_NM": search_term}
+        try:
+            response = requests.get(url, params=params, timeout=5)
+            data = response.json()
+
+            if "schoolInfo" in data:
+                rows = data["schoolInfo"][1]["row"]
+                return rows, search_term
+        except Exception:
+            continue
+
+    return [], None
+
+
+# 3. 급식 정보 검색 함수
+def get_meal_info(office_code: str, school_code: str, date_str: str):
+    """나이스 API를 통해 특정 날짜의 중식 정보를 가져옵니다."""
+    url = "https://open.neis.go.kr/hub/mealServiceDietInfo"
+    params = {
         "Type": "json",
-        "SCHUL_NM": school_name
+        "ATPT_OFCDC_SC_CODE": office_code,
+        "SD_SCHUL_CODE": school_code,
+        "MMEAL_SC_CODE": "2",  # 중식
+        "MLSV_FROM_YMD": date_str,
+        "MLSV_TO_YMD": date_str,
+        "pIndex": 1,
+        "pSize": 100,
     }
-    
+
     try:
-        res_school = requests.get(school_api_url, params=school_params).json()
-        
-        if "RESULT" in res_school and res_school["RESULT"]["CODE"] == "INFO-200":
-            st.error(f"'{school_name}'에 대한 검색 결과가 없습니다.")
-        elif "schoolInfo" in res_school:
-            school_row = res_school["schoolInfo"][1]["row"][0]
-            atpt_code = school_row["ATPT_OFCDC_SC_CODE"]
-            sd_code = school_row["SD_SCHUL_CODE"]
-            full_school_name = school_row["SCHUL_NM"]
-            location = school_row["LCTN_SC_NM"]
-            
-            st.success(f"🏫 **{full_school_name}** ({location}) 정보를 불러왔습니다.")
-            
-            # Step 2: 급식 식단 정보 조회
-            meal_api_url = "https://open.neis.go.kr/hub/mealServiceDietInfo"
-            meal_params = {
-                "KEY": NEIS_API_KEY,
-                "Type": "json",
-                "ATPT_OFCDC_SC_CODE": atpt_code,
-                "SD_SCHUL_CODE": sd_code,
-                "MMEAL_SC_CODE": "2",  # 중식
-                "MLSV_FROM_YMD": from_ymd,
-                "MLSV_TO_YMD": to_ymd,
-                "pSize": 1000
-            }
-            
-            res_meal = requests.get(meal_api_url, params=meal_params).json()
-            
-            if "RESULT" in res_meal and res_meal["RESULT"]["CODE"] == "INFO-200":
-                st.warning("선택하신 기간 동안의 급식 데이터가 없습니다.")
-            elif "mealServiceDietInfo" in res_meal:
-                meal_rows = res_meal["mealServiceDietInfo"][1]["row"]
-                total_count = res_meal["mealServiceDietInfo"][0]["head"][0]["list_total_count"]
-                
-                st.info(f"총 {total_count}건의 급식 데이터를 조회했습니다.")
-                
-                parsed_data = []
-                for row in meal_rows:
-                    date = row.get("MLSV_YMD", "")
-                    raw_menu = row.get("DDISH_NM", "")
-                    calorie = row.get("CAL_INFO", "정보 없음")
-                    
-                    cleaned_menu, protein_main, est_protein = parse_and_find_main_dish(raw_menu)
-                    
-                    parsed_data.append({
-                        "급식일자": f"{date[:4]}-{date[4:6]}-{date[6:]}" if len(date) == 8 else date,
-                        "추단백질 함량(합계)": f"약 {est_protein}g",
-                        "고단백 메인 요리 (추정 함량)": ", ".join(protein_main) if protein_main else "특이사항 없음",
-                        "전체 식단": ", ".join(cleaned_menu),
-                        "칼로리": calorie,
-                        "_protein_val": est_protein  # 정렬에 사용할 내부 수치 데이터
-                    })
-                
-                # --- 🔥 단백질 함량이 많은 순서대로 내림차순 정렬 ---
-                df = pd.DataFrame(parsed_data)
-                df_sorted = df.sort_values(by="_protein_val", ascending=False).reset_index(drop=True)
-                
-                # 화면 출력 시 정렬용 수치 컬럼만 제거
-                df_display = df_sorted.drop(columns=["_protein_val"])
-                
-                st.subheader("📊 고단백 메인 요리 및 단백질 함량 분석 결과 (단백질 많은 순)")
-                st.dataframe(df_display, use_container_width=True)
-                
-                # TOP 3 카드 출력
-                top3 = df_sorted.head(3).to_dict("records")
-                st.subheader("🏆 해당 기간 단백질 추정 함량 TOP 3 날짜")
-                
-                top_cols = st.columns(3)
-                for idx, item in enumerate(top3):
-                    if item['_protein_val'] > 0:
-                        with top_cols[idx]:
-                            st.metric(
-                                label=f"TOP {idx+1} ({item['급식일자']})", 
-                                value=f"{item['추단백질 함량(합계)']}",
-                                delta=item['칼로리']
-                            )
-                            st.write(f"**메인:** {item['고단백 메인 요리 (추정 함량)']}")
-                            st.caption(f"전체 메뉴: {item['전체 식단']}")
+        response = requests.get(url, params=params, timeout=5)
+        data = response.json()
+
+        if "mealServiceDietInfo" in data:
+            rows = data["mealServiceDietInfo"][1]["row"]
+            return rows[0] if rows else None
+    except Exception:
+        return None
+
+    return None
+
+
+# --- UI 구성 ---
+
+# 검색어 입력
+input_name = st.text_input("학교 이름을 입력하세요", placeholder="예: 수도여고, 서울고")
+
+if input_name:
+    schools, used_term = search_school(input_name.strip())
+
+    if not schools:
+        st.warning(
+            f"'{input_name}'에 해당하는 학교를 찾을 수 없습니다. 정확한 이름을 입력해 주세요."
+        )
+    else:
+        # 줄임말 보정 안내 문구
+        if used_term != input_name.strip():
+            st.info(
+                f"💡 '{input_name}' 검색 결과가 없어 '{used_term}'(으)로 검색한 결과입니다."
+            )
+
+        # 학교 선택 셀렉트박스 옵션 생성
+        school_options = {
+            f"{s['SCHUL_NM']} ({s.get('LCTN_SC_NM', '지역정보 없음')})": s
+            for s in schools
+        }
+
+        selected_label = st.selectbox(
+            "학교를 선택하세요", options=list(school_options.keys())
+        )
+
+        selected_school = school_options[selected_label]
+
+        # 한국 시간(KST) 기준 오늘 날짜 구하기
+        kst = pytz.timezone("Asia/Seoul")
+        today_kst = datetime.now(kst).date()
+
+        # 날짜 선택기 (기본값: 한국 시간 오늘)
+        selected_date = st.date_input("조회할 날짜를 선택하세요", value=today_kst)
+
+        if selected_date:
+            date_str = selected_date.strftime("%Y%m%d")
+
+            # 급식 정보 조회
+            meal = get_meal_info(
+                selected_school["ATPT_OFCDC_SC_CODE"],
+                selected_school["SD_SCHUL_CODE"],
+                date_str,
+            )
+
+            st.markdown("---")
+            st.subheader(
+                f"📅 {selected_date.strftime('%Y년 %m월 %d일')} 중식 메뉴"
+            )
+
+            if meal:
+                # <br/> 태그 전처리 및 알레르기 번호 정리
+                raw_menu = meal.get("DDISH_NM", "")
+                clean_menu_items = raw_menu.split("<br/>")
+
+                # 메뉴 표시
+                st.write("**[메뉴 및 알레르기 정보]**")
+                for item in clean_menu_items:
+                    st.text(f"• {item.strip()}")
+
+                # 칼로리 정보 표시
+                calorie = meal.get("CAL_INFO", "정보 없음")
+                st.success(f"🔥 **열량:** {calorie}")
             else:
-                st.error("급식 정보를 가져오는 중 오류가 발생했습니다.")
-        else:
-            st.error("학교 정보를 불러올 수 없습니다.")
-            
-    except Exception as e:
-        st.error(f"API 요청 중 에러가 발생했습니다: {e}")
+                st.info("해당 날짜에는 등록된 중식 급식 정보가 없습니다.")
