@@ -10,37 +10,42 @@ st.set_page_config(page_title="고단백 급식 메뉴 탐색기", layout="wide"
 # NEIS API KEY 설정
 NEIS_API_KEY = "6b62a20c6ac34b50b5e112d8e0b0e8e9"
 
-st.title("🍗 학교별 고단백 메인 요리 & 추정 단백질 함량 탐색기")
-st.caption("나이스 공공 급식 API 데이터를 활용하여 메인 요리를 감지하고 추정 단백질 함량을 계산합니다.")
+st.title("🍗 학교별 고단백 메인 요리 & 단백질 함량 탐색기")
+st.caption("나이스 공공 급식 API 데이터를 활용하여 단백질 함량이 높은 순서대로 식단을 분석합니다.")
 
-# 1. 고단백 식재료 키워드 및 100g 당 평균 단백질 함량(g) 데이터베이스
+# 1. 고단백 식재료 키워드 및 100g 당 평균 단백질 함량(g) 데이터베이스 확장
 PROTEIN_DATABASE = {
-    "닭": ("닭고기류", 23.0),
-    "치킨": ("치킨/닭튀김", 20.0),
-    "돈까스": ("돈가스", 15.0),
-    "돼지": ("돼지고기류", 18.0),
-    "돈육": ("돼지고기류", 18.0),
-    "제육": ("제육볶음", 16.0),
-    "불고기": ("불고기류", 17.0),
-    "삼겹": ("삼겹살", 14.0),
-    "보쌈": ("수육/보쌈", 19.0),
     "소고기": ("소고기류", 22.0),
     "우육": ("소고기류", 22.0),
+    "장어": ("장어 구이", 21.0),
+    "치킨": ("치킨/닭튀김", 20.0),
+    "닭": ("닭고기류", 20.0),
+    "생선": ("생선구이/조림", 20.0),
+    "고등어": ("고등어 요리", 20.0),
+    "연어": ("연어 요리", 20.0),
+    "보쌈": ("수육/보쌈", 19.0),
+    "삼치": ("삼치 요리", 19.0),
+    "돼지": ("돼지고기류", 18.0),
+    "돈육": ("돼지고기류", 18.0),
+    "돈": ("돼지고기류", 18.0),
+    "오리": ("오리고기", 18.0),
+    "오징어": ("오징어 요리", 18.0),
+    "참치": ("참치 요리", 18.0),
+    "순대": ("순대/순댓국", 17.0),
+    "불고기": ("불고기류", 17.0),
     "갈비": ("갈비구이/찜", 17.0),
+    "제육": ("제육볶음", 16.0),
+    "새우": ("새우 요리", 16.0),
+    "게살": ("게살 요리", 15.0),
+    "돈까스": ("돈가스", 15.0),
+    "삼겹": ("삼겹살", 14.0),
     "함박": ("함박스테이크", 14.0),
+    "콩": ("콩 요리", 13.0),
     "계란": ("계란 요리", 12.0),
     "달걀": ("계란 요리", 12.0),
     "메추리알": ("메추리알 조림", 11.0),
-    "두부": ("두부 요리", 8.0),
-    "콩": ("콩 요리", 13.0),
-    "오리": ("오리고기", 18.0),
-    "생선": ("생선구이/조림", 20.0),
-    "고등어": ("고등어 요리", 20.0),
-    "삼치": ("삼치 요리", 19.0),
-    "연어": ("연어 요리", 20.0),
-    "오징어": ("오징어 요리", 18.0),
-    "새우": ("새우 요리", 16.0),
-    "장어": ("장어 구이", 21.0)
+    "멸치": ("멸치 조림", 10.0),
+    "두부": ("두부 요리", 8.0)
 }
 
 # 2. 헬퍼 함수: 메뉴명 정제 및 단백질 함량 추정
@@ -59,12 +64,12 @@ def parse_and_find_main_dish(ddish_nm):
         if clean_name:
             cleaned_dishes.append(clean_name)
             
-            # 고단백 키워드 검사
+            # 고단백 키워드 검사 (한 메뉴당 가장 높은 단백질 키워드 1개 맵핑)
             for keyword, (category, protein_per_100g) in PROTEIN_DATABASE.items():
                 if keyword in clean_name:
                     protein_details.append(f"{clean_name} (약 {protein_per_100g}g/100g 기준)")
                     total_est_protein += protein_per_100g
-                    break # 한 메뉴당 대표 키워드 하나만 적용
+                    break 
                 
     return cleaned_dishes, protein_details, round(total_est_protein, 1)
 
@@ -142,18 +147,21 @@ if search_button and school_name:
                         "고단백 메인 요리 (추정 함량)": ", ".join(protein_main) if protein_main else "특이사항 없음",
                         "전체 식단": ", ".join(cleaned_menu),
                         "칼로리": calorie,
-                        "_protein_val": est_protein
+                        "_protein_val": est_protein  # 정렬에 사용할 내부 수치 데이터
                     })
                 
-                # 단백질 추정 함량이 높은 순서대로 정렬 가능
+                # --- 🔥 단백질 함량이 많은 순서대로 내림차순 정렬 ---
                 df = pd.DataFrame(parsed_data)
-                df_display = df.drop(columns=["_protein_val"])
+                df_sorted = df.sort_values(by="_protein_val", ascending=False).reset_index(drop=True)
                 
-                st.subheader("📊 고단백 메인 요리 및 단백질 함량 분석 결과")
+                # 화면 출력 시 정렬용 수치 컬럼만 제거
+                df_display = df_sorted.drop(columns=["_protein_val"])
+                
+                st.subheader("📊 고단백 메인 요리 및 단백질 함량 분석 결과 (단백질 많은 순)")
                 st.dataframe(df_display, use_container_width=True)
                 
-                # TOP 3 단백질 식단 하이라이트
-                top3 = sorted(parsed_data, key=lambda x: x["_protein_val"], reverse=True)[:3]
+                # TOP 3 카드 출력
+                top3 = df_sorted.head(3).to_dict("records")
                 st.subheader("🏆 해당 기간 단백질 추정 함량 TOP 3 날짜")
                 
                 top_cols = st.columns(3)
