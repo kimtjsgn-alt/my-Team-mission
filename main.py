@@ -2,9 +2,13 @@ import streamlit as st
 import requests
 import re
 import pandas as pd
+from datetime import datetime, timedelta
 
 # Page Configuration
 st.set_page_config(page_title="고단백 급식 메뉴 탐색기", layout="wide")
+
+# NEIS API KEY 설정
+NEIS_API_KEY = "6b62a20c6ac34b50b5e112d8e0b0e8e9"
 
 st.title("🍗 학교별 고단백 메인 요리 탐색기")
 st.caption("나이스 공공 급식 API 데이터를 활용하여 고단백 급식 식단을 분석합니다.")
@@ -38,16 +42,25 @@ def parse_and_find_main_dish(ddish_nm):
     return cleaned_dishes, protein_dishes
 
 # 3. 사용자 입력 화면
-col1, col2 = st.columns([3, 2])
+col1, col2, col3 = st.columns([3, 2, 2])
 with col1:
-    school_name = st.text_input("학교 이름을 입력하세요 (예: 서울고등학교, 한빛중)", "")
+    school_name = st.text_input("학교 이름", "서울고등학교")
 with col2:
-    search_button = st.button("검색 및 분석 실행", type="primary")
+    start_date = st.date_input("조회 시작일", datetime.now() - timedelta(days=30))
+with col3:
+    end_date = st.date_input("조회 종료일", datetime.now())
+
+search_button = st.button("검색 및 분석 실행", type="primary")
 
 if search_button and school_name:
+    # 날짜 포맷 변환 (YYYYMMDD)
+    from_ymd = start_date.strftime("%Y%m%d")
+    to_ymd = end_date.strftime("%Y%m%d")
+
     # --- Step 1: 학교 기본 정보 조회 ---
     school_api_url = "https://open.neis.go.kr/hub/schoolInfo"
     school_params = {
+        "KEY": NEIS_API_KEY,
         "Type": "json",
         "SCHUL_NM": school_name
     }
@@ -70,20 +83,25 @@ if search_button and school_name:
             # --- Step 2: 급식 식단 정보 조회 ---
             meal_api_url = "https://open.neis.go.kr/hub/mealServiceDietInfo"
             meal_params = {
+                "KEY": NEIS_API_KEY,
                 "Type": "json",
                 "ATPT_OFCDC_SC_CODE": atpt_code,
                 "SD_SCHUL_CODE": sd_code,
-                "MMEAL_SC_CODE": "2"  # 중식
+                "MMEAL_SC_CODE": "2",  # 중식
+                "MLSV_FROM_YMD": from_ymd,
+                "MLSV_TO_YMD": to_ymd,
+                "pSize": 1000
             }
             
             res_meal = requests.get(meal_api_url, params=meal_params).json()
             
             if "RESULT" in res_meal and res_meal["RESULT"]["CODE"] == "INFO-200":
-                st.warning("해당 학교의 등록된 급식 데이터가 없습니다.")
+                st.warning("선택하신 기간 동안의 등록된 급식 데이터가 없습니다.")
             elif "mealServiceDietInfo" in res_meal:
                 meal_rows = res_meal["mealServiceDietInfo"][1]["row"]
+                total_count = res_meal["mealServiceDietInfo"][0]["head"][0]["list_total_count"]
                 
-                st.info("ℹ️ 인증키가 없는 요청 특성상 최근 5건의 급식 데이터를 기반으로 분석합니다.")
+                st.info(f"총 {total_count}건의 급식 데이터를 성공적으로 조회했습니다.")
                 
                 parsed_data = []
                 for row in meal_rows:
@@ -107,7 +125,7 @@ if search_button and school_name:
                 st.dataframe(df, use_container_width=True)
                 
                 # 요약 카드 출력
-                st.subheader("💡 고단백 식단 요약")
+                st.subheader("💡 날짜별 식단 상세 보기")
                 for item in parsed_data:
                     with st.expander(f"📅 {item['급식일자']} - 메인 요리: {item['추론된 고단백 메인 요리']}"):
                         st.write(f"**전체 메뉴:** {item['전체 식단']}")
