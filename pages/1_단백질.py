@@ -11,19 +11,10 @@ st.set_page_config(
 
 # 사이드바 이동 안내
 st.sidebar.markdown("### 📌 페이지 이동")
-st.sidebar.page_link("main.py", label="🏠 홈 (학교 검색)", icon="🔍")
-st.sidebar.page_link(
-    "pages/1_단백질.py", label="📅 송탄고 달력별 급식", icon="🍖"
-)
+st.sidebar.page_link("pages/1_단백질.py", label="📅 송탄고 달력별 급식", icon="🍖")
 
 st.title("📅 우리 학교 달력별 급식")
 st.caption("송탄고등학교 중식 메뉴 및 영양 정보 조회")
-
-# 상단 바로가기 카드
-with st.container(border=True):
-    st.page_link(
-        "main.py", label="🔍 다른 학교 검색하러 가기 (메인 홈)", icon="🏠"
-    )
 
 # 송탄고등학교 고정 정보
 OFFICE_CODE = "J10"  # 경기도교육청
